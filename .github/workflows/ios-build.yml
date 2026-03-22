@@ -29,6 +29,10 @@ jobs:
         run: |
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           printf '%s' "$PROVISIONING_PROFILE" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/biomax.mobileprovision
+      - name: Bump build number
+        run: |
+          cd ios/App
+          agvtool new-version -all 2
       - name: Build iOS
         run: |
           cd ios/App
