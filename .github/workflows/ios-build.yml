@@ -18,6 +18,12 @@ jobs:
         run: CI=false npm run build
       - name: Sync Capacitor
         run: npx cap sync ios
+      - name: Show ios folder contents
+        run: ls -la ios/App/
+      - name: Install CocoaPods
+        run: sudo gem install cocoapods
+      - name: Pod Install
+        run: cd ios/App && pod install
       - name: Build iOS
         run: |
           cd ios/App
