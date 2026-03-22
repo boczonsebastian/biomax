@@ -32,7 +32,7 @@ jobs:
       - name: Bump build number
         run: |
           cd ios/App
-          agvtool new-version -all 2
+          agvtool new-version -all 3
       - name: Build iOS
         run: |
           cd ios/App
