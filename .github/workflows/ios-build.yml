@@ -23,18 +23,18 @@ jobs:
           CERTIFICATES_P12: ${{ secrets.CERTIFICATES_P12 }}
           CERTIFICATES_PASSWORD: ${{ secrets.CERTIFICATES_PASSWORD }}
         run: |
-          echo $CERTIFICATES_P12 | base64 --decode > certificate.p12
+          printf '%s' "$CERTIFICATES_P12" | base64 --decode > certificate.p12
           security create-keychain -p biomax123 build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p biomax123 build.keychain
-          security import certificate.p12 -k build.keychain -P $CERTIFICATES_PASSWORD -T /usr/bin/codesign
+          security import certificate.p12 -k build.keychain -P "$CERTIFICATES_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k biomax123 build.keychain
       - name: Install Provisioning Profile
         env:
           PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
         run: |
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo $PROVISIONING_PROFILE | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/biomax.mobileprovision
+          printf '%s' "$PROVISIONING_PROFILE" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/biomax.mobileprovision
       - name: Build iOS
         run: |
           cd ios/App
@@ -48,4 +48,4 @@ jobs:
           APP_STORE_CONNECT_USERNAME: ${{ secrets.ASC_USERNAME }}
           APP_STORE_CONNECT_PASSWORD: ${{ secrets.ASC_PASSWORD }}
         run: |
-          xcrun altool --upload-app -f ios/App/build/*.ipa -u $APP_STORE_CONNECT_USERNAME -p $APP_STORE_CONNECT_PASSWORD
+          xcrun altool --upload-app -f ios/App/build/*.ipa -u "$APP_STORE_CONNECT_USERNAME" -p "$APP_STORE_CONNECT_PASSWORD" --type ios
