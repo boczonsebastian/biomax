@@ -1,0 +1,6 @@
+{
+	"appId": "com.biomax.app",
+	"appName": "BioMax",
+	"webDir": "build",
+	"packageClassList": []
+}
