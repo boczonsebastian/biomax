@@ -18,13 +18,11 @@ jobs:
         run: CI=false npm run build
       - name: Sync Capacitor
         run: npx cap sync ios
-      - name: Show ios folder contents
-        run: ls -la ios/App/
-      - name: Install CocoaPods
-        run: sudo gem install cocoapods
-      - name: Pod Install
-        run: cd ios/App && pod install
+      - name: Resolve SPM dependencies
+        run: |
+          cd ios/App
+          xcodebuild -resolvePackageDependencies -project App.xcodeproj -scheme App
       - name: Build iOS
         run: |
           cd ios/App
-          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release -archivePath App.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release -archivePath App.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO ALLOW_TARGET_PLATFORM_SPECIALIZATION=YES
