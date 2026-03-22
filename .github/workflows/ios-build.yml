@@ -24,12 +24,11 @@ jobs:
           p12-file-base64: ${{ secrets.CERTIFICATES_P12 }}
           p12-password: ${{ secrets.CERTIFICATES_PASSWORD }}
       - name: Install Provisioning Profile
-        uses: apple-actions/download-provisioning-profiles@v3
-        with:
-          bundle-id: com.biomax.app
-          issuer-id: ${{ secrets.APP_STORE_ISSUER_ID }}
-          api-key-id: ${{ secrets.APP_STORE_KEY_ID }}
-          api-private-key: ${{ secrets.APP_STORE_PRIVATE_KEY }}
+        env:
+          PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
+        run: |
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          printf '%s' "$PROVISIONING_PROFILE" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/biomax.mobileprovision
       - name: Build iOS
         run: |
           cd ios/App
