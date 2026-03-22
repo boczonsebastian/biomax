@@ -32,7 +32,7 @@ jobs:
       - name: Build iOS
         run: |
           cd ios/App
-          xcodebuild -project App.xcodeproj -scheme App -configuration Release -archivePath App.xcarchive archive
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release -archivePath App.xcarchive archive DEVELOPMENT_TEAM=9522AX33HS CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Apple Distribution" PROVISIONING_PROFILE_SPECIFIER="BioMax Distribution"
       - name: Export IPA
         run: |
           cd ios/App
