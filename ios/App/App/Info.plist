@@ -47,5 +47,11 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>BioMax needs camera access to analyze your facial features.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>BioMax needs photo library access to analyze your facial features.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>BioMax needs access to save photos.</string>
 </dict>
 </plist>
