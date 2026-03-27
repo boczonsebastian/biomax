@@ -2896,6 +2896,10 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
     if (!consentGiven) { setShowConsentModal(true); return; }
     setPhase("analysing");
     setAnalysisError(null);
+    setProgress(3);
+    setProgressLabel("Waking up analysis server…");
+    // Warm up Render.com backend (free tier sleeps after inactivity)
+    try { await fetch("https://biomax-backend.onrender.com/health", { method:"GET" }); } catch(_) {}
     setProgress(5);
     setProgressLabel("Initialising biometric scan…");
     const onProgress = (pct, label) => { setProgress(pct); setProgressLabel(label); };
