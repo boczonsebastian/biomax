@@ -3388,8 +3388,7 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
                 style={{ background:C.card,
                   border:`2px dashed ${weekPhotoErrors[cfg.key] ? C.red : hasPhoto ? C.accentDim : C.border}`,
                   borderRadius:12, padding:"20px 16px", textAlign:"center", cursor:"pointer", position:"relative",
-                  transition:"border-color 0.2s" }}
-                onClick={() => document.getElementById("weekupload-"+cfg.key).click()}>
+                  transition:"border-color 0.2s" }}>
                 {weekValidating[cfg.key] ? (
                   <div style={{ padding:"20px 0" }}>
                     <div style={{ fontFamily:fM, fontSize:10, color:C.accent, animation:"blink 1s infinite" }}>VALIDATING…</div>
@@ -3410,7 +3409,8 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
                     <div style={{ fontFamily:fM, fontSize:10, color:C.textDim }}>{cfg.hint}</div>
                   </>
                 )}
-                <input id={"weekupload-"+cfg.key} type="file" accept="image/*" style={{ display:"none" }}
+                <input id={"weekupload-"+cfg.key} type="file" accept="image/*"
+                  style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer",zIndex:hasPhoto?-1:2}}
                   onChange={e => { const f=e.target.files[0]; if(f) handleWeekPhotoChange(cfg.key,f); e.target.value=""; }}/>
               </div>
             );
