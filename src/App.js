@@ -1547,7 +1547,6 @@ function UploadBox({ label, sublabel, icon, hint, value, onChange, validating, v
   const [drag, setDrag] = useState(false);
   return (
     <div
-      onClick={() => !value && ref.current.click()}
       onDragOver={e=>{e.preventDefault();setDrag(true)}}
       onDragLeave={()=>setDrag(false)}
       onDrop={e=>{e.preventDefault();setDrag(false);const f=e.dataTransfer.files[0];if(f)onChange(f)}}
@@ -1604,7 +1603,9 @@ function UploadBox({ label, sublabel, icon, hint, value, onChange, validating, v
           </div>
         </>
       )}
-      <input ref={ref} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)onChange(f);e.target.value="";}}/>
+      <input ref={ref} type="file" accept="image/*"
+        style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:value?"default":"pointer",zIndex:value?-1:2}}
+        onChange={e=>{const f=e.target.files[0];if(f)onChange(f);e.target.value="";}}/>
     </div>
   );
 }
