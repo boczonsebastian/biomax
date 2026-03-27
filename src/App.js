@@ -2672,6 +2672,8 @@ export default function App() {
   const [weekError, setWeekError] = useState(null);
   const [weekValidating, setWeekValidating] = useState({ frontal:false, profile:false, torso:false, body:false });
   const [weekPhotoErrors, setWeekPhotoErrors] = useState({});
+  const [showConsentModal, setShowConsentModal] = useState(false);
+  const [consentGiven, setConsentGiven] = useState(() => localStorage.getItem("biomax_ai_consent") === "true");
 
   const photoConfig = [
     { key:"frontal", label:"Frontal Face Photo", icon:"🧑", sublabel:"Look directly at the camera, neutral expression, good lighting", hint:"Front-facing · Good light · No filters" },
@@ -2891,6 +2893,7 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
   const frontalValid = valid.frontal;
 
   const handleAnalyse = async () => {
+    if (!consentGiven) { setShowConsentModal(true); return; }
     setPhase("analysing");
     setAnalysisError(null);
     setProgress(5);
@@ -2926,6 +2929,45 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
     setWeekPhotoFiles({ frontal:null, profile:null });
     setWeekError(null);
   };
+
+  // ─── CONSENT MODAL ──────────────────────────────────────────────────────
+  const consentModal = showConsentModal && (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", zIndex:9999,
+      display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
+      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18,
+        padding:32, maxWidth:420, width:"100%", fontFamily:fB }}>
+        <div style={{ fontSize:28, marginBottom:12, textAlign:"center" }}>🔒</div>
+        <div style={{ fontSize:20, fontWeight:700, color:C.text, marginBottom:12, textAlign:"center" }}>
+          Data Sharing Notice
+        </div>
+        <div style={{ fontSize:14, color:C.textSub, lineHeight:1.7, marginBottom:20 }}>
+          To analyse your photos, BioMax will send them to <strong style={{color:C.text}}>Anthropic's Claude AI</strong> (a third-party service).
+          <br/><br/>
+          • Your photos are used <strong style={{color:C.text}}>only for this analysis</strong><br/>
+          • They are <strong style={{color:C.text}}>not stored</strong> on any server<br/>
+          • They are <strong style={{color:C.text}}>not used for training</strong> AI models<br/>
+          • They are discarded immediately after results are returned
+        </div>
+        <div style={{ display:"flex", gap:12, flexDirection:"column" }}>
+          <button onClick={() => {
+            localStorage.setItem("biomax_ai_consent","true");
+            setConsentGiven(true);
+            setShowConsentModal(false);
+            handleAnalyse();
+          }} style={{ background:`linear-gradient(135deg,${C.accent},${C.accentBright})`,
+            border:"none", borderRadius:12, padding:"14px 24px", color:"#06060e",
+            fontFamily:fB, fontSize:15, fontWeight:700, cursor:"pointer" }}>
+            I Agree — Continue Analysis
+          </button>
+          <button onClick={() => setShowConsentModal(false)}
+            style={{ background:"transparent", border:`1px solid ${C.border}`, borderRadius:12,
+              padding:"12px 24px", color:C.textSub, fontFamily:fB, fontSize:14, cursor:"pointer" }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   // ─── LANDING ────────────────────────────────────────────────────────────
   if (phase === "landing") return (
@@ -3026,6 +3068,7 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
   // ─── UPLOAD ─────────────────────────────────────────────────────────────
   if (phase === "upload") return (
     <div style={{ minHeight:"100vh", background:C.bg, padding:"32px 16px 80px" }}>
+      {consentModal}
       <style>{css}</style>
       <div style={{ maxWidth:700, margin:"0 auto" }}>
         <button onClick={()=>setPhase("landing")}
@@ -3084,6 +3127,7 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
   // ─── GOALS ──────────────────────────────────────────────────────────────
   if (phase === "goals") return (
     <div style={{ minHeight:"100vh", background:C.bg, padding:"32px 16px 80px", display:"flex", alignItems:"center", justifyContent:"center" }}>
+      {consentModal}
       <style>{css}</style>
       <div style={{ maxWidth:560, width:"100%" }}>
         <button onClick={()=>setPhase("upload")}
