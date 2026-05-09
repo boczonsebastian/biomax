@@ -64,6 +64,34 @@ function fileToBase64(file) {
   });
 }
 
+// ── Resize + compress image to avoid memory glitches on mobile ───────────
+function resizeImage(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 1200;
+        let { width, height } = img;
+        if (width > MAX || height > MAX) {
+          if (width > height) { height = Math.round(height * MAX / width); width = MAX; }
+          else { width = Math.round(width * MAX / height); height = MAX; }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+        resolve(dataUrl);
+      };
+      img.onerror = () => resolve(e.target.result);
+      img.src = e.target.result;
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
 function dataUrlToBase64(dataUrl) {
   return dataUrl.split(",")[1];
 }
@@ -76,9 +104,13 @@ async function callClaude(messages, systemPrompt, maxTokens = 2000) {
     system: systemPrompt,
     messages,
   };
-  const resp = await fetch("https://biomax-backend.onrender.com/api/claude", {
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
     body: JSON.stringify(body),
   });
   if (!resp.ok) {
@@ -165,8 +197,7 @@ Respond ONLY with valid JSON:
     const clean = text.replace(/```json|```/g, "").trim();
     return JSON.parse(clean);
   } catch {
-    // Network error — pass through so the photo can still be used
-    return { isRealHuman: true, isCorrectType: true, reason: "", confidence: 1 };
+    return { isRealHuman: false, isCorrectType: false, reason: "Could not validate image", confidence: 0 };
   }
 }
 
@@ -1548,6 +1579,7 @@ function UploadBox({ label, sublabel, icon, hint, value, onChange, validating, v
   const [drag, setDrag] = useState(false);
   return (
     <div
+      onClick={() => !value && ref.current.click()}
       onDragOver={e=>{e.preventDefault();setDrag(true)}}
       onDragLeave={()=>setDrag(false)}
       onDrop={e=>{e.preventDefault();setDrag(false);const f=e.dataTransfer.files[0];if(f)onChange(f)}}
@@ -1604,9 +1636,7 @@ function UploadBox({ label, sublabel, icon, hint, value, onChange, validating, v
           </div>
         </>
       )}
-      <input ref={ref} type="file" accept="image/*"
-        style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:value?"default":"pointer",zIndex:value?-1:2}}
-        onChange={e=>{const f=e.target.files[0];if(f)onChange(f);e.target.value="";}}/>
+      <input ref={ref} type="file" accept="image/*" capture="user" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)onChange(f);e.target.value="";}}/>
     </div>
   );
 }
@@ -2653,7 +2683,13 @@ export default function App() {
   const [progress, setProgress] = useState(0);
   const [progressLabel, setProgressLabel] = useState("");
   const [activeTab, setActiveTab] = useState("face");
-  const [isPaid, setIsPaid] = useState(false);
+  const [isPaid, setIsPaid] = useState(() => {
+    try { return localStorage.getItem("biomax_premium") === "1"; } catch { return false; }
+  });
+  const unlockPremium = () => {
+    try { localStorage.setItem("biomax_premium", "1"); } catch {}
+    setIsPaid(true);
+  };
   const [exerciseFilter, setExerciseFilter] = useState("All");
   const [streakTick, setStreakTick] = useState(0); // bump to re-read localStorage counts
 
@@ -2663,6 +2699,7 @@ export default function App() {
   // Saved profile & week tracking (persisted to storage)
   const [savedProfile, setSavedProfile] = useState(null);
   const [weekUpdates, setWeekUpdates] = useState([]); // [{week:2,date,photos,analysis}]
+  const [analysisDate, setAnalysisDate] = useState(null); // ISO string of when week 1 was done
   const [storageLoaded, setStorageLoaded] = useState(false);
   const [saveStatus, setSaveStatus] = useState(""); // "saving"|"saved"|"error"
   const [weekPhase, setWeekPhase] = useState(null); // null | 2 | 3 | 4
@@ -2673,8 +2710,6 @@ export default function App() {
   const [weekError, setWeekError] = useState(null);
   const [weekValidating, setWeekValidating] = useState({ frontal:false, profile:false, torso:false, body:false });
   const [weekPhotoErrors, setWeekPhotoErrors] = useState({});
-  const [showConsentModal, setShowConsentModal] = useState(false);
-  const [consentGiven, setConsentGiven] = useState(() => localStorage.getItem("biomax_ai_consent") === "true");
 
   const photoConfig = [
     { key:"frontal", label:"Frontal Face Photo", icon:"🧑", sublabel:"Look directly at the camera, neutral expression, good lighting", hint:"Front-facing · Good light · No filters" },
@@ -2693,6 +2728,7 @@ export default function App() {
           const data = JSON.parse(r.value);
           setSavedProfile(data.baseAnalysis || null);
           setWeekUpdates(data.weekUpdates || []);
+          if (data.analysisDate) setAnalysisDate(data.analysisDate);
           if (data.userInfo) setUserInfo(u => ({...u, ...data.userInfo}));
           if (data.goals) setGoals(data.goals);
         }
@@ -2702,12 +2738,14 @@ export default function App() {
     loadProfile();
   }, []);
 
-  const saveProfileToStorage = async (baseAnalysis, weekUpds, info, goalsTxt) => {
+  const saveProfileToStorage = async (baseAnalysis, weekUpds, info, goalsTxt, analysisDate) => {
     setSaveStatus("saving");
     try {
       if (typeof window.storage === "undefined") { setSaveStatus("error"); return; }
       await window.storage.set('looksmaxx_profile', JSON.stringify({
-        baseAnalysis, weekUpdates: weekUpds, userInfo: info, goals: goalsTxt, savedAt: new Date().toISOString()
+        baseAnalysis, weekUpdates: weekUpds, userInfo: info, goals: goalsTxt,
+        analysisDate: analysisDate || new Date().toISOString(),
+        savedAt: new Date().toISOString()
       }));
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus(""), 2500);
@@ -2821,32 +2859,29 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
       setWeekPhotoErrors(e=>({...e,[key]:null}));
       return;
     }
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      const dataUrl = ev.target.result;
-      setWeekPhotos(p => ({...p,[key]:dataUrl}));
-      setWeekPhotoErrors(e=>({...e,[key]:null}));
-      setWeekValidating(v=>({...v,[key]:true}));
-      try {
-        const mediaType = file.type || "image/jpeg";
-        const base64 = dataUrlToBase64(dataUrl);
-        const labels = { frontal:"Face Frontal", profile:"Side Profile", torso:"Torso", body:"Full Body" };
-        const result = await validateImage(base64, mediaType, labels[key]);
-        setWeekValidating(v=>({...v,[key]:false}));
-        if (!result.isRealHuman || !result.isCorrectType) {
-          setWeekPhotoErrors(e=>({...e,[key]: result.reason || "Invalid photo — please upload a real photo of yourself."}));
-          setWeekPhotos(p=>({...p,[key]:null}));
-          setWeekPhotoFiles(p=>({...p,[key]:null}));
-        } else {
-          setWeekPhotoFiles(p=>({...p,[key]:{ base64, mediaType }}));
-        }
-      } catch {
-        setWeekValidating(v=>({...v,[key]:false}));
-        const base64 = dataUrlToBase64(dataUrl);
-        setWeekPhotoFiles(p=>({...p,[key]:{ base64, mediaType: file.type||"image/jpeg" }}));
+    const dataUrl = await resizeImage(file);
+    if (!dataUrl) return;
+    setWeekPhotos(p => ({...p,[key]:dataUrl}));
+    setWeekPhotoErrors(e=>({...e,[key]:null}));
+    setWeekValidating(v=>({...v,[key]:true}));
+    try {
+      const mediaType = "image/jpeg";
+      const base64 = dataUrlToBase64(dataUrl);
+      const labels = { frontal:"Face Frontal", profile:"Side Profile", torso:"Torso", body:"Full Body" };
+      const result = await validateImage(base64, mediaType, labels[key]);
+      setWeekValidating(v=>({...v,[key]:false}));
+      if (!result.isRealHuman || !result.isCorrectType) {
+        setWeekPhotoErrors(e=>({...e,[key]: result.reason || "Invalid photo — please upload a real photo of yourself."}));
+        setWeekPhotos(p=>({...p,[key]:null}));
+        setWeekPhotoFiles(p=>({...p,[key]:null}));
+      } else {
+        setWeekPhotoFiles(p=>({...p,[key]:{ base64, mediaType }}));
       }
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      setWeekValidating(v=>({...v,[key]:false}));
+      const base64 = dataUrlToBase64(dataUrl);
+      setWeekPhotoFiles(p=>({...p,[key]:{ base64, mediaType:"image/jpeg" }}));
+    }
   }, []);
 
 
@@ -2858,49 +2893,41 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
       setErrors(e => ({ ...e, [key]: null }));
       return;
     }
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const dataUrl = e.target.result;
-      setPhotos(p => ({ ...p, [key]: dataUrl }));
-      setErrors(er => ({ ...er, [key]: null }));
-      setValid(v => ({ ...v, [key]: false }));
-      setValidating(vl => ({ ...vl, [key]: true }));
-      try {
-        const mediaType = file.type || "image/jpeg";
-        const base64 = dataUrlToBase64(dataUrl);
-        const photoTypeLabels = { frontal:"Face Frontal", profile:"Side Profile", torso:"Torso", body:"Full Body" };
-        const result = await validateImage(base64, mediaType, photoTypeLabels[key]);
-        setValidating(vl => ({ ...vl, [key]: false }));
-        if (!result.isRealHuman) {
-          setErrors(er => ({ ...er, [key]: result.reason || "This doesn't appear to be a real person. Please upload a genuine photo." }));
-          setPhotoFiles(p => ({ ...p, [key]: null }));
-        } else if (!result.isCorrectType) {
-          setErrors(er => ({ ...er, [key]: result.reason || `Please upload a correct ${photoTypeLabels[key]} photo.` }));
-          setPhotoFiles(p => ({ ...p, [key]: null }));
-        } else {
-          setValid(v => ({ ...v, [key]: true }));
-          setPhotoFiles(p => ({ ...p, [key]: { base64, mediaType } }));
-        }
-      } catch {
-        setValidating(vl => ({ ...vl, [key]: false }));
+    const dataUrl = await resizeImage(file);
+    if (!dataUrl) return;
+    setPhotos(p => ({ ...p, [key]: dataUrl }));
+    setErrors(er => ({ ...er, [key]: null }));
+    setValid(v => ({ ...v, [key]: false }));
+    setValidating(vl => ({ ...vl, [key]: true }));
+    try {
+      const mediaType = "image/jpeg";
+      const base64 = dataUrlToBase64(dataUrl);
+      const photoTypeLabels = { frontal:"Face Frontal", profile:"Side Profile", torso:"Torso", body:"Full Body" };
+      const result = await validateImage(base64, mediaType, photoTypeLabels[key]);
+      setValidating(vl => ({ ...vl, [key]: false }));
+      if (!result.isRealHuman) {
+        setErrors(er => ({ ...er, [key]: result.reason || "This doesn't appear to be a real person. Please upload a genuine photo." }));
+        setPhotoFiles(p => ({ ...p, [key]: null }));
+      } else if (!result.isCorrectType) {
+        setErrors(er => ({ ...er, [key]: result.reason || `Please upload a correct ${photoTypeLabels[key]} photo.` }));
+        setPhotoFiles(p => ({ ...p, [key]: null }));
+      } else {
         setValid(v => ({ ...v, [key]: true }));
-        setPhotoFiles(p => ({ ...p, [key]: { base64: dataUrlToBase64(dataUrl), mediaType: file.type || "image/jpeg" } }));
+        setPhotoFiles(p => ({ ...p, [key]: { base64, mediaType } }));
       }
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      setValidating(vl => ({ ...vl, [key]: false }));
+      setValid(v => ({ ...v, [key]: true }));
+      setPhotoFiles(p => ({ ...p, [key]: { base64: dataUrlToBase64(dataUrl), mediaType: "image/jpeg" } }));
+    }
   }, []);
 
   const allValid = Object.values(valid).filter(Boolean).length >= 1 && !Object.values(validating).some(Boolean);
   const frontalValid = valid.frontal;
 
   const handleAnalyse = async () => {
-    if (!consentGiven) { setShowConsentModal(true); return; }
     setPhase("analysing");
     setAnalysisError(null);
-    setProgress(3);
-    setProgressLabel("Waking up analysis server…");
-    // Warm up Render.com backend (free tier sleeps after inactivity)
-    try { await fetch("https://biomax-backend.onrender.com/health", { method:"GET" }); } catch(_) {}
     setProgress(5);
     setProgressLabel("Initialising biometric scan…");
     const onProgress = (pct, label) => { setProgress(pct); setProgressLabel(label); };
@@ -2910,10 +2937,12 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
       setProgressLabel("Analysis complete — decoding results…");
       setTimeout(async () => {
         setAnalysis(result);
-        setSavedProfile(result);
+        setSavedProfile({ ...result, baselineFrontalPhoto: photos.frontal || null });
         setPhase("results");
-        // Auto-save to storage
-        await saveProfileToStorage(result, [], userInfo, goals);
+        // Auto-save to storage — stamp the analysis date for week unlock gating
+        const now = new Date().toISOString();
+        setAnalysisDate(now);
+        await saveProfileToStorage({ ...result, baselineFrontalPhoto: photos.frontal || null }, [], userInfo, goals, now);
       }, 600);
     } catch (err) {
       console.error("Analysis error:", err);
@@ -2934,45 +2963,6 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
     setWeekPhotoFiles({ frontal:null, profile:null });
     setWeekError(null);
   };
-
-  // ─── CONSENT MODAL ──────────────────────────────────────────────────────
-  const consentModal = showConsentModal && (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", zIndex:9999,
-      display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
-      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18,
-        padding:32, maxWidth:420, width:"100%", fontFamily:fB }}>
-        <div style={{ fontSize:28, marginBottom:12, textAlign:"center" }}>🔒</div>
-        <div style={{ fontSize:20, fontWeight:700, color:C.text, marginBottom:12, textAlign:"center" }}>
-          Data Sharing Notice
-        </div>
-        <div style={{ fontSize:14, color:C.textSub, lineHeight:1.7, marginBottom:20 }}>
-          To analyse your photos, BioMax will send them to <strong style={{color:C.text}}>Anthropic's Claude AI</strong> (a third-party service).
-          <br/><br/>
-          • Your photos are used <strong style={{color:C.text}}>only for this analysis</strong><br/>
-          • They are <strong style={{color:C.text}}>not stored</strong> on any server<br/>
-          • They are <strong style={{color:C.text}}>not used for training</strong> AI models<br/>
-          • They are discarded immediately after results are returned
-        </div>
-        <div style={{ display:"flex", gap:12, flexDirection:"column" }}>
-          <button onClick={() => {
-            localStorage.setItem("biomax_ai_consent","true");
-            setConsentGiven(true);
-            setShowConsentModal(false);
-            handleAnalyse();
-          }} style={{ background:`linear-gradient(135deg,${C.accent},${C.accentBright})`,
-            border:"none", borderRadius:12, padding:"14px 24px", color:"#06060e",
-            fontFamily:fB, fontSize:15, fontWeight:700, cursor:"pointer" }}>
-            I Agree — Continue Analysis
-          </button>
-          <button onClick={() => setShowConsentModal(false)}
-            style={{ background:"transparent", border:`1px solid ${C.border}`, borderRadius:12,
-              padding:"12px 24px", color:C.textSub, fontFamily:fB, fontSize:14, cursor:"pointer" }}>
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 
   // ─── LANDING ────────────────────────────────────────────────────────────
   if (phase === "landing") return (
@@ -3073,7 +3063,6 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
   // ─── UPLOAD ─────────────────────────────────────────────────────────────
   if (phase === "upload") return (
     <div style={{ minHeight:"100vh", background:C.bg, padding:"32px 16px 80px" }}>
-      {consentModal}
       <style>{css}</style>
       <div style={{ maxWidth:700, margin:"0 auto" }}>
         <button onClick={()=>setPhase("landing")}
@@ -3132,7 +3121,6 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
   // ─── GOALS ──────────────────────────────────────────────────────────────
   if (phase === "goals") return (
     <div style={{ minHeight:"100vh", background:C.bg, padding:"32px 16px 80px", display:"flex", alignItems:"center", justifyContent:"center" }}>
-      {consentModal}
       <style>{css}</style>
       <div style={{ maxWidth:560, width:"100%" }}>
         <button onClick={()=>setPhase("upload")}
@@ -3437,7 +3425,8 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
                 style={{ background:C.card,
                   border:`2px dashed ${weekPhotoErrors[cfg.key] ? C.red : hasPhoto ? C.accentDim : C.border}`,
                   borderRadius:12, padding:"20px 16px", textAlign:"center", cursor:"pointer", position:"relative",
-                  transition:"border-color 0.2s" }}>
+                  transition:"border-color 0.2s" }}
+                onClick={() => document.getElementById("weekupload-"+cfg.key).click()}>
                 {weekValidating[cfg.key] ? (
                   <div style={{ padding:"20px 0" }}>
                     <div style={{ fontFamily:fM, fontSize:10, color:C.accent, animation:"blink 1s infinite" }}>VALIDATING…</div>
@@ -3458,8 +3447,7 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
                     <div style={{ fontFamily:fM, fontSize:10, color:C.textDim }}>{cfg.hint}</div>
                   </>
                 )}
-                <input id={"weekupload-"+cfg.key} type="file" accept="image/*"
-                  style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer",zIndex:hasPhoto?-1:2}}
+                <input id={"weekupload-"+cfg.key} type="file" accept="image/*" style={{ display:"none" }}
                   onChange={e => { const f=e.target.files[0]; if(f) handleWeekPhotoChange(cfg.key,f); e.target.value=""; }}/>
               </div>
             );
@@ -3591,7 +3579,7 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
               <div style={{ fontFamily:fM, fontSize:9, color:C.accentDim, letterSpacing:"0.18em" }}>PROGRESS TRACKER</div>
               {!isPaid && (
-                <button onClick={() => setIsPaid(true)}
+                <button onClick={() => unlockPremium()}
                   style={{ fontFamily:fM, fontSize:9, background:"linear-gradient(135deg,#C8A46A,#FFD700)",
                     border:"none", borderRadius:6, padding:"4px 10px", cursor:"pointer",
                     color:"#06060e", fontWeight:700, letterSpacing:"0.06em" }}>
@@ -3609,7 +3597,15 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
                 const weekLocked = w.n > 1 && !isPaid;
                 const done = w.n === 1 || weekUpdates.some(u => u.week === w.n);
                 const upd = weekUpdates.find(u => u.week === w.n);
-                const active = !weekLocked && !done && (w.n === 2 || weekUpdates.some(u => u.week === w.n - 1));
+                // Time-gate: each week requires (w.n - 1) * 7 days since analysisDate
+                const daysRequired = (w.n - 1) * 7;
+                const daysSinceAnalysis = analysisDate
+                  ? Math.floor((Date.now() - new Date(analysisDate).getTime()) / (1000 * 60 * 60 * 24))
+                  : 0;
+                const timeUnlocked = daysSinceAnalysis >= daysRequired;
+                const daysUntilUnlock = Math.max(0, daysRequired - daysSinceAnalysis);
+                const prevWeekDone = w.n === 2 || weekUpdates.some(u => u.week === w.n - 1);
+                const active = !weekLocked && !done && timeUnlocked && prevWeekDone;
                 return (
                   <div key={w.n} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", position:"relative",
                     opacity: weekLocked ? 0.45 : 1, transition:"opacity 0.2s" }}>
@@ -3630,7 +3626,7 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
                       {weekLocked ? "🔒" : done ? "✓" : w.n}
                     </div>
                     <div style={{ fontFamily:fB, fontSize:10, fontWeight:700, color:done&&!weekLocked?C.accent:active?C.textSub:C.textDim, marginTop:6, textAlign:"center" }}>{w.label}</div>
-                    <div style={{ fontFamily:fM, fontSize:9, color:C.textDim, textAlign:"center" }}>{upd ? `Score: ${upd.currentScore}` : w.sub}</div>
+                    <div style={{ fontFamily:fM, fontSize:9, color:C.textDim, textAlign:"center" }}>{upd ? `Score: ${upd.currentScore}` : (!timeUnlocked && w.n > 1 && isPaid ? `${daysUntilUnlock}d left` : w.sub)}</div>
                     {upd && !weekLocked && (
                       <div style={{ fontFamily:fM, fontSize:9, color: upd.scoreDelta >= 0 ? C.green : C.red, textAlign:"center" }}>
                         {upd.scoreDelta >= 0 ? "+" : ""}{upd.scoreDelta}
@@ -3643,8 +3639,13 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
                         Update →
                       </button>
                     )}
+                    {!weekLocked && !done && !timeUnlocked && w.n > 1 && isPaid && (
+                      <div style={{ marginTop:4, fontFamily:fM, fontSize:9, color:C.textDim, textAlign:"center" }}>
+                        ⏳ {daysUntilUnlock}d
+                      </div>
+                    )}
                     {weekLocked && (
-                      <button onClick={() => setIsPaid(true)}
+                      <button onClick={() => unlockPremium()}
                         style={{ marginTop:4, fontFamily:fM, fontSize:9, background:"rgba(200,164,106,0.1)", border:`1px solid ${C.accentDim}`,
                           borderRadius:6, padding:"3px 8px", color:C.accent, cursor:"pointer" }}>
                         Unlock
@@ -3857,6 +3858,16 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
           {/* ── TAB: BODY ── */}
           {activeTab === "body" && (
             <div style={{ animation:"fadeUp .4s ease both" }}>
+              {(!photos.torso && !photos.body) ? (
+                <div style={{ ...sec, textAlign:"center", padding:"40px 24px" }}>
+                  <div style={{ fontSize:40, marginBottom:16 }}>📷</div>
+                  <h3 style={{ fontFamily:fH, fontSize:22, color:C.text, marginBottom:8 }}>No Body Photos Uploaded</h3>
+                  <p style={{ fontFamily:fB, fontSize:13, color:C.textSub, lineHeight:1.7, maxWidth:340, margin:"0 auto" }}>
+                    Body composition analysis requires a torso or full body photo. Start a new analysis and upload body photos to unlock this section.
+                  </p>
+                </div>
+              ) : (
+                <>
               <div style={sec}>
                 <h3 style={{ fontFamily:fH, fontSize:20, color:C.text, marginBottom:14 }}>Body Metrics</h3>
                 {bodyScoreKeys.map(m => (
@@ -3881,11 +3892,13 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
                   </div>
                 ))}
               </div>
+                </>
+              )}
             </div>
           )}
 
           {/* ── TAB: EXERCISES ── */}
-          {activeTab === "exercises" && (!isPaid ? <PaywallOverlay onUnlock={() => setIsPaid(true)} heading="Personalised Exercise Library" subheading={`${(analysis.exercises||[]).length} exercises precision-targeted to your specific concerns`} /> : (
+          {activeTab === "exercises" && (!isPaid ? <PaywallOverlay onUnlock={() => unlockPremium()} heading="Personalised Exercise Library" subheading={`${(analysis.exercises||[]).length} exercises precision-targeted to your specific concerns`} /> : (
             <div style={{ animation:"fadeUp .4s ease both" }}>
               {/* Daily reset check + StreakBanner */}
               {(() => {
@@ -3971,7 +3984,7 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
 
 
           {/* ── TAB: TECHNIQUES ── */}
-          {activeTab === "techniques" && (!isPaid ? <PaywallOverlay onUnlock={() => setIsPaid(true)} heading="Manual Techniques" subheading="Hands-on craniosacral & fascial release techniques from Mindful Movement" icon="🤲" /> : (
+          {activeTab === "techniques" && (!isPaid ? <PaywallOverlay onUnlock={() => unlockPremium()} heading="Manual Techniques" subheading="Hands-on craniosacral & fascial release techniques from Mindful Movement" icon="🤲" /> : (
             <div style={{ animation:"fadeUp .4s ease both" }}>
               <div style={{ ...sec, marginBottom:16, background:`linear-gradient(135deg,rgba(232,200,122,0.06),${C.card})`,
                 border:`1px solid rgba(232,200,122,0.25)` }}>
@@ -3993,7 +4006,7 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
           ))}
 
           {/* ── TAB: ROUTINES ── */}
-          {activeTab === "routines" && (!isPaid ? <PaywallOverlay onUnlock={() => setIsPaid(true)} heading="Morning &amp; Evening Routines" icon="🌅" subheading="Your personalised morning and evening step-by-step protocols" /> : (
+          {activeTab === "routines" && (!isPaid ? <PaywallOverlay onUnlock={() => unlockPremium()} heading="Morning &amp; Evening Routines" icon="🌅" subheading="Your personalised morning and evening step-by-step protocols" /> : (
             <div style={{ animation:"fadeUp .4s ease both" }}>
               <div style={{ ...sec, marginBottom:18 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18 }}>
@@ -4013,7 +4026,7 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
           ))}
 
           {/* ── TAB: STACK ── */}
-          {activeTab === "stack" && (!isPaid ? <PaywallOverlay onUnlock={() => setIsPaid(true)} heading="💊 Personalised Supplement Stack" subheading="Tailored to your detected concerns and goals. Essential items shown first." /> : (
+          {activeTab === "stack" && (!isPaid ? <PaywallOverlay onUnlock={() => unlockPremium()} heading="💊 Personalised Supplement Stack" subheading="Tailored to your detected concerns and goals. Essential items shown first." /> : (
             <div style={{ animation:"fadeUp .4s ease both" }}>
               <div style={sec}>
                 <h3 style={{ fontFamily:fH, fontSize:20, color:C.text, marginBottom:4 }}>💊 Personalised Supplement Stack</h3>
@@ -4074,7 +4087,7 @@ For faceScores, compare carefully against Week 1 baseline: symmetry=${baseFaceSc
               analysis={analysis}
               weekUpdates={weekUpdates}
               userInfo={userInfo}
-              frontalPhoto={photos.frontal}
+              frontalPhoto={photos.frontal || savedProfile?.baselineFrontalPhoto || null}
               w4FrontalPhoto={weekUpdates.find(u => u.week === 4)?.photoFrontal || null}
             />
           )}
