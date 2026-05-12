@@ -1,0 +1,52 @@
+name: Build and Submit iOS App
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Select Xcode 26
+        run: sudo xcode-select -s /Applications/Xcode_26.app/Contents/Developer || sudo xcode-select -s /Applications/Xcode_16.app/Contents/Developer
+      - name: Install dependencies
+        run: npm install
+      - name: Build web app
+        run: CI=false npm run build
+      - name: Sync Capacitor
+        run: npx cap sync ios
+      - name: Install Certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.CERTIFICATES_P12 }}
+          p12-password: ${{ secrets.CERTIFICATES_PASSWORD }}
+      - name: Install Provisioning Profile
+        env:
+          PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
+        run: |
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          printf '%s' "$PROVISIONING_PROFILE" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/biomax.mobileprovision
+      - name: Bump version and build number
+        run: |
+          cd ios/App
+          agvtool new-marketing-version 1.2
+          agvtool new-version -all ${{ github.run_number }}
+      - name: Build iOS
+        run: |
+          cd ios/App
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release -archivePath App.xcarchive archive DEVELOPMENT_TEAM=9522AX33HS CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Apple Distribution" PROVISIONING_PROFILE_SPECIFIER="BioMax Distribution"
+      - name: Export IPA
+        run: |
+          cd ios/App
+          xcodebuild -exportArchive -archivePath App.xcarchive -exportOptionsPlist ../../ExportOptions.plist -exportPath ./build
+      - name: Upload to App Store
+        env:
+          ASC_USERNAME: ${{ secrets.ASC_USERNAME }}
+          ASC_PASSWORD: ${{ secrets.ASC_PASSWORD }}
+        run: |
+          xcrun altool --upload-app -f ios/App/build/*.ipa -u "$ASC_USERNAME" -p "$ASC_PASSWORD" --type ios --output-format xml
